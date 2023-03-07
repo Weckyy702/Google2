@@ -10,11 +10,10 @@ use std::{
     path::{Path, PathBuf}, time::Instant,
 };
 
-const MAN_PATHS: [&str; 4] = [
+const MAN_PATHS: [&str; 3] = [
     "/usr/local/man",
     "/usr/local/share/man",
     "/usr/share/man",
-    "/home/weckyy702/.local/share/man",
 ];
 
 const MAGIC_BYTES: [u8; 5] = [0x49, 0x6e, 0x64, 0x65, 0x78];

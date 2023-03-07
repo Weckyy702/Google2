@@ -1,4 +1,5 @@
-use crossbeam::channel::Receiver;
+use crossbeam_channel::Receiver;
+use crossbeam_utils::thread;
 use flate2::{read::GzDecoder, write::GzEncoder, Compression};
 use std::{
     collections::{HashMap, VecDeque},
@@ -196,7 +197,7 @@ fn parse_files_threaded(
 }
 
 fn scan_directories(start_paths: &[&str]) -> Option<DocumentIndex> {
-    let (sender, reciever) = crossbeam::channel::bounded(NUM_THREADS * 2);
+    let (sender, reciever) = crossbeam_channel::bounded(NUM_THREADS * 2);
 
     let parsers: [(String, ParsingFunction); 1] = [("gz".into(), read_gzip)];
     let parsers = ParsersPerFileType::from_iter(parsers);
@@ -206,7 +207,7 @@ fn scan_directories(start_paths: &[&str]) -> Option<DocumentIndex> {
         .map(|s| PathBuf::from(s))
         .collect::<VecDeque<_>>();
 
-    let index = crossbeam::thread::scope(|s| {
+    let index = thread::scope(|s| {
         let handles = (0..NUM_THREADS)
             .map(|_| s.spawn(|_| parse_files_threaded(reciever.clone(), &parsers)))
             .collect::<Vec<_>>();

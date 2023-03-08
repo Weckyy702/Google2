@@ -7,18 +7,15 @@ use std::{
     fs::{self, File},
     io::{BufReader, BufWriter, Read, Write},
     iter::Iterator,
-    path::{Path, PathBuf}, time::Instant,
+    path::{Path, PathBuf},
+    time::Instant,
 };
 
-const MAN_PATHS: [&str; 3] = [
-    "/usr/local/man",
-    "/usr/local/share/man",
-    "/usr/share/man",
-];
+const MAN_PATHS: [&str; 3] = ["/usr/local/man", "/usr/local/share/man", "/usr/share/man"];
 
 const MAGIC_BYTES: [u8; 5] = [0x49, 0x6e, 0x64, 0x65, 0x78];
 
-const NUM_THREADS: usize = 8;
+const NUM_THREADS: usize = 4;
 
 type ParsingFunction = fn(BufReader<File>) -> Option<Vec<char>>;
 type ParsersPerFileType = HashMap<String, ParsingFunction>;
@@ -50,13 +47,13 @@ impl<'a> Lexer<'a> {
     }
 
     fn is_word_part(c: char) -> bool {
-        c.is_alphabetic() || c == '-' || c == '\''
+        !Self::is_ignored(c)
     }
 
     fn is_ignored(c: char) -> bool {
         const IGNORED_CHARS: [char; 19] = [
-            '.', ',', '(', ')', '[', ']', '{', '}', '/', '+', '<', '>', '\\', '"', '\'', '$', '^',
-            ':', '!',
+            ',', '(', ')', '[', ']', '{', '}', '/', '+', '<', '>', '$', '^', ':', '!', '=', '"',
+            '#', '"',
         ];
 
         if c.is_whitespace() {
@@ -110,7 +107,12 @@ impl Lexer<'_> {
             return None;
         }
 
-        let result = self.content.iter().take(n).collect();
+        let result = self
+            .content
+            .iter()
+            .take(n)
+            .collect::<String>()
+            .to_lowercase();
         self.content = &self.content[n..];
 
         Some(result)
@@ -150,10 +152,19 @@ fn read_gzip(file: BufReader<File>) -> Option<Vec<char>> {
 // Document parsers. These output actual documents
 
 fn parse_document(content: Vec<char>) -> Option<Document> {
+    const IGNORED_WORDS: [&str; 28] = [
+        "\"", ".TP", ".TH", ".RI", ".hy", ".", ".sp", ";", ".nf", ".RE", ".TE", ".IR", ".BR", ".f",
+        "'\\\"", ".BI", ".nh", ".PP", ".\\\"", ".SH", ".B", ".RS", ".ad", ".TS", "*\"", ".nf",
+        "\\", ".I",
+    ];
+
     let mut doc = Document::default();
 
     for word in Lexer::new(&content) {
-        doc.add_word(word);
+        let word = word.strip_suffix('.').unwrap_or(&word[..]);
+        if !IGNORED_WORDS.contains(&word) {
+            doc.add_word(word.into());
+        }
     }
 
     Some(doc)
@@ -277,20 +288,33 @@ fn write_document_and_path<W: Write>(
     write_document(writer, document)
 }
 
-fn write_index(index: &DocumentIndex, output_path: &Path) -> Result<(), ()> {
-    let mut writer = GzEncoder::new(BufWriter::new(File::create(output_path).map_err(log_err)?), Compression::default());
-
+fn write_index_to<W: Write>(writer: &mut W, index: &DocumentIndex) -> Result<(), ()> {
     // Magic byte
     writer.write_all(&MAGIC_BYTES).map_err(log_err)?;
 
     // Length of index
-    write_size(&mut writer, index.len())?;
+    write_size(writer, index.len())?;
 
     for (path, document) in index {
-        write_document_and_path(&mut writer, path.to_str().ok_or(())?, document)?
+        write_document_and_path(writer, path.to_str().ok_or(())?, document)?
     }
 
     Ok(())
+}
+
+fn write_compressed_index(index: &DocumentIndex, output_path: &Path) -> Result<(), ()> {
+    let mut writer = GzEncoder::new(
+        BufWriter::new(File::create(output_path).map_err(log_err)?),
+        Compression::default(),
+    );
+
+    write_index_to(&mut writer, index)
+}
+
+fn write_uncompressed_index(index: &DocumentIndex, output_path: &Path) -> Result<(), ()> {
+    let mut writer = BufWriter::new(File::create(output_path).map_err(log_err)?);
+
+    write_index_to(&mut writer, index)
 }
 
 fn read_bytes<R: Read, const N: usize>(reader: &mut R) -> Result<[u8; N], ()> {
@@ -340,30 +364,94 @@ fn read_document_and_path<R: Read>(reader: &mut R) -> Result<(PathBuf, Document)
     Ok((path, document))
 }
 
-fn load_index(path: &Path) -> Result<DocumentIndex, ()> {
-    let mut reader = GzDecoder::new(File::open(path).map_err(log_err)?);
-
+fn load_index_from<R: Read>(reader: &mut R) -> Result<DocumentIndex, ()> {
     // Magic byte
-    let magic_bytes = read_bytes(&mut reader)?;
+    let magic_bytes = read_bytes(reader)?;
     if magic_bytes != MAGIC_BYTES {
         eprintln!("ERROR: incorrect magic bytes: {magic_bytes:?}");
         return Err(());
     }
 
     // Length of index
-    let index_size = read_size(&mut reader)?;
+    let index_size = read_size(reader)?;
     let mut index = DocumentIndex::with_capacity(index_size);
 
     for _ in 0..index_size {
-        let (path, document) = read_document_and_path(&mut reader)?;
+        let (path, document) = read_document_and_path(reader)?;
         index.insert(path, document);
     }
 
     Ok(index)
 }
 
+fn load_compressed_index(path: &Path) -> Result<DocumentIndex, ()> {
+    let mut reader = GzDecoder::new(BufReader::new(File::open(path).map_err(log_err)?));
+
+    load_index_from(&mut reader)
+}
+
+fn load_uncompressed_index(path: &Path) -> Result<DocumentIndex, ()> {
+    let mut reader = BufReader::new(File::open(path).map_err(log_err)?);
+
+    load_index_from(&mut reader)
+}
+
+fn tf(document: &Document, word: &str) -> f64 {
+    let n = document.word_count as f64;
+
+    *document.document_frequencies.get(word).unwrap_or(&0) as f64 / n
+}
+
+fn idf(index: &DocumentIndex, word: &str) -> f64 {
+    let n = index.len() as f64;
+    let m = index
+        .iter()
+        .filter(|(_, document)| document.document_frequencies.contains_key(word))
+        .count()
+        .max(1) as f64;
+
+    (n / m).ln()
+}
+
+fn get_cached_idf<'a>(
+    index: &DocumentIndex,
+    idf_cache: &mut HashMap<&'a str, f64>,
+    word: &'a str,
+) -> f64 {
+    if let Some(&idf) = idf_cache.get(word) {
+        return idf;
+    }
+    let idf = idf(index, word);
+    idf_cache.insert(word, idf);
+    return idf;
+}
+
+fn tf_idf<'a>(
+    document: &Document,
+    index: &DocumentIndex,
+    idf_cache: &mut HashMap<&'a str, f64>,
+    words: &[&'a str],
+) -> f64 {
+    let mut rank = 0f64;
+    for word in words {
+        let idf = get_cached_idf(index, idf_cache, word);
+        rank += tf(document, word) * idf;
+    }
+    rank
+}
+
+fn find_results<'a>(index: &'a DocumentIndex, words: &[&str]) -> Vec<(&'a PathBuf, f64)> {
+    let mut idf_cache = HashMap::new();
+    let mut results = index
+        .iter()
+        .map(|(path, document)| (path, tf_idf(document, index, &mut idf_cache, words)))
+        .collect::<Vec<_>>();
+    results.sort_unstable_by(|(_, rank1), (_, rank2)| rank2.total_cmp(rank1));
+    results
+}
+
 fn main() {
-    let index_path = Path::new("./out.dat.gz");
+    let index_path = Path::new("./out.dat");
     if !index_path.exists() {
         eprintln!(
             "WARN: Index file {} is not accessible! Rebuilding index...",
@@ -372,11 +460,20 @@ fn main() {
         let start = Instant::now();
         let index = scan_directories(&MAN_PATHS).unwrap();
         println!("Scanning took {:?}", start.elapsed());
-        write_index(&index, index_path).unwrap();
-        println!("Scanning and writing took {:?}", start.elapsed());
+
+        let start = Instant::now();
+        write_uncompressed_index(&index, index_path).unwrap();
+        println!("Writing took {:?}", start.elapsed());
     }
 
     let start = Instant::now();
-    let _index = load_index(index_path).unwrap();
+    let index = load_uncompressed_index(index_path).unwrap();
     println!("Reading index took {:?}", start.elapsed());
+
+    let start = Instant::now();
+    let documents = find_results(&index, &["tcp", "socket"]);
+    println!("Finding results took {:?}", start.elapsed());
+    for (path, rank) in documents.iter().take(25) {
+        println!("{}: {rank}", path.display());
+    }
 }

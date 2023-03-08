@@ -421,6 +421,7 @@ fn get_cached_idf<'a>(
     if let Some(&idf) = idf_cache.get(word) {
         return idf;
     }
+
     let idf = idf(index, word);
     idf_cache.insert(word, idf);
     return idf;
@@ -484,5 +485,7 @@ fn main() {
         find_results(&index, &["tcp", "socket", "stream"]),
         "Finding results"
     );
+    for (index, (path, rank)) in documents.iter().take(25).enumerate() {
+        println!("{}: {}: {rank}", index + 1, path.display());
     }
 }

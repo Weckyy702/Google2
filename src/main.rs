@@ -467,23 +467,22 @@ fn main() {
             "WARN: Index file {} is not accessible! Rebuilding index...",
             index_path.display()
         );
-        let start = Instant::now();
-        let index = scan_directories(&MAN_PATHS).unwrap();
-        println!("Scanning took {:?}", start.elapsed());
+        let index = time!(scan_directories(&MAN_PATHS).unwrap(), "Scanning");
 
-        let start = Instant::now();
-        write_uncompressed_index(&index, index_path).unwrap();
-        println!("Writing took {:?}", start.elapsed());
+        time!(
+            write_uncompressed_index(&index, index_path).unwrap(),
+            "Writing"
+        );
     }
 
-    let start = Instant::now();
-    let index = load_uncompressed_index(index_path).unwrap();
-    println!("Reading index took {:?}", start.elapsed());
+    let index = time!(
+        load_uncompressed_index(index_path).unwrap(),
+        "Loading index"
+    );
 
-    let start = Instant::now();
-    let documents = find_results(&index, &["tcp", "socket"]);
-    println!("Finding results took {:?}", start.elapsed());
-    for (path, rank) in documents.iter().take(25) {
-        println!("{}: {rank}", path.display());
+    let documents = time!(
+        find_results(&index, &["tcp", "socket", "stream"]),
+        "Finding results"
+    );
     }
 }

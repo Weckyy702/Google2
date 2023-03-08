@@ -450,6 +450,16 @@ fn find_results<'a>(index: &'a DocumentIndex, words: &[&str]) -> Vec<(&'a PathBu
     results
 }
 
+//Silly macro to time the execution of an expression
+macro_rules! time {
+    ($exp:expr, $label:literal) => {{
+        let start = Instant::now();
+        let result = $exp;
+        println!("{} took {:?}", $label, start.elapsed());
+        result
+    }};
+}
+
 fn main() {
     let index_path = Path::new("./out.dat");
     if !index_path.exists() {

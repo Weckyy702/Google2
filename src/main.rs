@@ -1,6 +1,6 @@
 use crossbeam_channel::Receiver;
 use crossbeam_utils::thread;
-use flate2::{read::GzDecoder, write::GzEncoder, Compression};
+use flate2::read::GzDecoder;
 use std::{
     collections::{HashMap, VecDeque},
     error::Error,
@@ -302,15 +302,6 @@ fn write_index_to<W: Write>(writer: &mut W, index: &DocumentIndex) -> Result<(),
     Ok(())
 }
 
-fn write_compressed_index(index: &DocumentIndex, output_path: &Path) -> Result<(), ()> {
-    let mut writer = GzEncoder::new(
-        BufWriter::new(File::create(output_path).map_err(log_err)?),
-        Compression::default(),
-    );
-
-    write_index_to(&mut writer, index)
-}
-
 fn write_uncompressed_index(index: &DocumentIndex, output_path: &Path) -> Result<(), ()> {
     let mut writer = BufWriter::new(File::create(output_path).map_err(log_err)?);
 
@@ -382,12 +373,6 @@ fn load_index_from<R: Read>(reader: &mut R) -> Result<DocumentIndex, ()> {
     }
 
     Ok(index)
-}
-
-fn load_compressed_index(path: &Path) -> Result<DocumentIndex, ()> {
-    let mut reader = GzDecoder::new(BufReader::new(File::open(path).map_err(log_err)?));
-
-    load_index_from(&mut reader)
 }
 
 fn load_uncompressed_index(path: &Path) -> Result<DocumentIndex, ()> {

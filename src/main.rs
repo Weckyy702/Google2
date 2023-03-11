@@ -3,9 +3,10 @@ use crossbeam_utils::thread;
 use flate2::read::GzDecoder;
 use std::{
     collections::{HashMap, VecDeque},
+    env,
     error::Error,
     fs::{self, File},
-    io::{BufReader, BufWriter, Read, Write},
+    io::{BufRead, BufReader, BufWriter, Read, Write},
     iter::Iterator,
     path::{Path, PathBuf},
     time::Instant,
@@ -435,6 +436,21 @@ fn find_results<'a>(index: &'a DocumentIndex, words: &[String]) -> Vec<(&'a Path
     results
 }
 
+fn load_or_create_index(index_path: &Path, thread_count: usize) -> Result<DocumentIndex, ()> {
+    if !index_path.exists() {
+        eprintln!(
+            "WARN: Index file {} is not accessible! Rebuilding index...",
+            index_path.display()
+        );
+        let index = scan_directories(&MAN_PATHS, thread_count).ok_or(())?;
+        write_uncompressed_index(&index, index_path).unwrap();
+
+        Ok(index)
+    } else {
+        load_uncompressed_index(index_path)
+    }
+}
+
 //Silly macro to time the execution of an expression
 macro_rules! time {
     ($exp:expr, $label:literal) => {{
@@ -467,8 +483,8 @@ fn main() {
         .unwrap_or(4usize);
 
     let index = time!(
-        load_uncompressed_index(index_path).unwrap(),
-        "Loading index"
+        load_or_create_index(index_path, thread_count).expect("Can create index"),
+        "Creating Index"
     );
 
     loop {

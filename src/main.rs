@@ -415,7 +415,7 @@ fn tf_idf<'a>(
     document: &Document,
     index: &DocumentIndex,
     idf_cache: &mut HashMap<&'a str, f64>,
-    words: &[&'a str],
+    words: &'a [String],
 ) -> f64 {
     let mut rank = 0f64;
     for word in words {
@@ -425,7 +425,7 @@ fn tf_idf<'a>(
     rank
 }
 
-fn find_results<'a>(index: &'a DocumentIndex, words: &[&str]) -> Vec<(&'a PathBuf, f64)> {
+fn find_results<'a>(index: &'a DocumentIndex, words: &[String]) -> Vec<(&'a PathBuf, f64)> {
     let mut idf_cache = HashMap::new();
     let mut results = index
         .iter()
@@ -471,11 +471,27 @@ fn main() {
         "Loading index"
     );
 
-    let documents = time!(
-        find_results(&index, &["tcp", "socket", "stream"]),
-        "Finding results"
-    );
-    for (index, (path, rank)) in documents.iter().take(25).enumerate() {
-        println!("{}: {}: {rank}", index + 1, path.display());
+    loop {
+        print!("Enter your query\n>");
+        std::io::stdout().lock().flush().map_err(log_fatal).unwrap();
+
+        let mut query = String::new();
+        std::io::stdin()
+            .lock()
+            .read_line(&mut query)
+            .map_err(log_fatal)
+            .unwrap();
+
+        let query = query.chars().collect::<Vec<_>>();
+
+        let query_tokens = Lexer::new(&query).collect::<Vec<_>>();
+
+        println!("{query_tokens:?}");
+
+        let documents = time!(find_results(&index, &query_tokens), "Finding results");
+
+        for (index, (path, rank)) in documents.iter().take(5).enumerate() {
+            println!("{}: {}: {rank}", index + 1, path.display());
+        }
     }
 }

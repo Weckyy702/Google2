@@ -15,8 +15,6 @@ const MAN_PATHS: [&str; 3] = ["/usr/local/man", "/usr/local/share/man", "/usr/sh
 
 const MAGIC_BYTES: [u8; 5] = [0x49, 0x6e, 0x64, 0x65, 0x78];
 
-const NUM_THREADS: usize = 4;
-
 type ParsingFunction = fn(BufReader<File>) -> Option<Vec<char>>;
 type ParsersPerFileType = HashMap<String, ParsingFunction>;
 
@@ -206,8 +204,8 @@ fn parse_files_threaded(
     Some(documents)
 }
 
-fn scan_directories(start_paths: &[&str]) -> Option<DocumentIndex> {
-    let (sender, reciever) = crossbeam_channel::bounded(NUM_THREADS * 2);
+fn scan_directories(start_paths: &[&str], num_threads: usize) -> Option<DocumentIndex> {
+    let (sender, reciever) = crossbeam_channel::bounded(num_threads * 2);
 
     let parsers: [(String, ParsingFunction); 1] = [("gz".into(), read_gzip)];
     let parsers = ParsersPerFileType::from_iter(parsers);
@@ -218,7 +216,7 @@ fn scan_directories(start_paths: &[&str]) -> Option<DocumentIndex> {
         .collect::<VecDeque<_>>();
 
     let index = thread::scope(|s| {
-        let handles = (0..NUM_THREADS)
+        let handles = (0..num_threads)
             .map(|_| s.spawn(|_| parse_files_threaded(reciever.clone(), &parsers)))
             .collect::<Vec<_>>();
 
@@ -233,7 +231,8 @@ fn scan_directories(start_paths: &[&str]) -> Option<DocumentIndex> {
             }
         }
 
-        for _ in 0..NUM_THREADS {
+        //Send stop signals
+        for _ in 0..num_threads {
             sender.send(None).map_err(log_fatal).unwrap();
         }
 
@@ -447,19 +446,25 @@ macro_rules! time {
 }
 
 fn main() {
-    let index_path = Path::new("./out.dat");
-    if !index_path.exists() {
-        eprintln!(
-            "WARN: Index file {} is not accessible! Rebuilding index...",
-            index_path.display()
-        );
-        let index = time!(scan_directories(&MAN_PATHS).unwrap(), "Scanning");
+    let args = env::args().collect::<Vec<_>>();
 
-        time!(
-            write_uncompressed_index(&index, index_path).unwrap(),
-            "Writing"
-        );
-    }
+    let index_path = if let Some(arg) = args
+        .iter()
+        .filter(|arg| arg.starts_with("--index_path="))
+        .next()
+    {
+        Path::new(arg.strip_prefix("--index_path=").unwrap())
+    } else {
+        Path::new("./index.dat")
+    };
+
+    let thread_count = args
+        .iter()
+        .filter(|arg| arg.starts_with("--thread_count="))
+        .flat_map(|arg| arg.strip_prefix("--thread_count="))
+        .flat_map(|s| s.parse().ok())
+        .next()
+        .unwrap_or(4usize);
 
     let index = time!(
         load_uncompressed_index(index_path).unwrap(),

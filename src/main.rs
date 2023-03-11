@@ -18,7 +18,7 @@ const MAGIC_BYTES: [u8; 5] = [0x49, 0x6e, 0x64, 0x65, 0x78];
 type ParsingFunction = fn(BufReader<File>) -> Option<Vec<char>>;
 type ParsersPerFileType = HashMap<String, ParsingFunction>;
 
-#[derive(Default, Debug, PartialEq, Eq)]
+#[derive(Default, Debug)]
 struct Document {
     word_count: usize,
     document_frequencies: HashMap<String, usize>,
